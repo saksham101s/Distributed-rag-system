@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_coordinator
+    command: python coordinator/coordinator_service.py
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LLM_PROVIDER=mock
+      - VIRTUAL_NODES=100
+      - SHARD_TIMEOUT_SECONDS=1.5
+    depends_on:
+      - shard_0
+      - shard_1
+      - shard_2
+      - redis
+
+  shard_0:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_shard_0
+    command: python shard_node/shard_service.py --shard-id shard_0 --port 50051
+    ports:
+      - "50051:50051"
+
+  shard_1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_shard_1
+    command: python shard_node/shard_service.py --shard-id shard_1 --port 50052
+    ports:
+      - "50052:50052"
+
+  shard_2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_shard_2
+    command: python shard_node/shard_service.py --shard-id shard_2 --port 50053
+    ports:
+      - "50053:50053"
+
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    ports:
+      - "6379:6379"
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: rag_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml

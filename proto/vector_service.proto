@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package vector_service;
+
+message VectorChunk {
+  string chunk_id = 1;
+  string doc_id = 2;
+  string text = 3;
+  int32 chunk_index = 4;
+  string metadata_json = 5;
+  repeated float embedding = 6;
+}
+
+message IngestVectorRequest {
+  string shard_id = 1;
+  repeated VectorChunk chunks = 2;
+  bool is_replica_sync = 3;
+}
+
+message IngestVectorResponse {
+  bool success = 1;
+  int32 inserted_count = 2;
+  string message = 3;
+}
+
+message SearchRequest {
+  string shard_id = 1;
+  repeated float query_vector = 2;
+  int32 top_k = 3;
+}
+
+message SearchResultItem {
+  string chunk_id = 1;
+  string doc_id = 2;
+  string text = 3;
+  float score = 4;
+  int32 chunk_index = 5;
+  string metadata_json = 6;
+  string shard_id = 7;
+}
+
+message SearchResponse {
+  repeated SearchResultItem results = 1;
+  string shard_id = 2;
+  float latency_ms = 3;
+}
+
+message HealthCheckRequest {
+  string client_id = 1;
+}
+
+message HealthCheckResponse {
+  string shard_id = 1;
+  bool healthy = 2;
+  int32 vector_count = 3;
+  float uptime_seconds = 4;
+}
+
+service VectorStoreService {
+  rpc IngestVector(IngestVectorRequest) returns (IngestVectorResponse);
+  rpc SearchVector(SearchRequest) returns (SearchResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
