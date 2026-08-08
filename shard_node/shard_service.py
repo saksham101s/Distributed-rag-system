@@ -1,3 +1,9 @@
+import os
+import sys
+
+# Ensure project root is in sys.path for direct script execution
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import time
 import json
 import logging
@@ -6,6 +12,7 @@ import asyncio
 import grpc
 
 from proto_gen import vector_service_pb2, vector_service_pb2_grpc
+
 from shared.faiss_store import FAISSVectorStore, SearchResult
 from shared.document_processor import DocumentChunk
 from shared.config import config

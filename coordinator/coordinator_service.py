@@ -1,3 +1,9 @@
+import os
+import sys
+
+# Ensure project root is in sys.path for direct script execution
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import json
 import logging
 import asyncio
@@ -10,6 +16,7 @@ from pydantic import BaseModel, Field
 import grpc
 
 from proto_gen import vector_service_pb2, vector_service_pb2_grpc
+
 from shared.consistent_hash import ConsistentHashRing
 from shared.document_processor import DocumentProcessor, DocumentChunk
 from shared.embeddings import embeddings_engine
