@@ -8,7 +8,8 @@
 - 2026-10-29: 24 of the original 26 known issues are fixed (#5 is only partly fixed, and #12 waits on the UI rework). Upserts, deletes, an anti-entropy repair loop, query dedup, tracing and Docker targets were added.
 - 2026-10-29 (later): **Phase A done** (backend for the new UI): document catalog/detail, file upload (.txt/.md/.pdf), streaming answers (SSE),
   a cluster event stream (SSE), and dev-only chaos endpoints.
-- Tests: 29 pytest tests pass (19 before Phase A) (`python -m pytest`), plus the chaos script (`python tests/chaos/chaos_test.py`). An end-to-end HTTP smoke test (3 shard processes + uvicorn) also passed.
+- UI rework done on branch `ui-rework` (uncommitted).
+- Tests: 29 pytest tests pass (19 before Phase A), plus 5 vitest tests in `frontend/` (`python -m pytest`), plus the chaos script (`python tests/chaos/chaos_test.py`). An end-to-end HTTP smoke test (3 shard processes + uvicorn) also passed.
 - Git: the fixes are committed as `7a8c141` on branch `fix-known-issues` (off `main` @ `621471e`). Phase A work is **uncommitted**
   on branch `phase-a-ui-backend`, which branches from `fix-known-issues`. Nothing is pushed to `origin` (github.com/saksham101s/Distributed-rag-system).
   The parent folder `~/Documents/Distributed-rag-system/` is not a repo; the repo is the inner `Distributed-rag-system/`.
@@ -17,7 +18,7 @@
 
 ## User's plan
 - Goal (2026-10-29): "Fix the issues and also plan the next steps to improve the project, after that we will update the UI."
-- Order: (1) fix known issues ✅ → (2) the user chose **Phase A before the UI** ✅ → (3) UI rework (next).
+- Order: (1) fix known issues ✅ → (2) the user chose **Phase A before the UI** ✅ → (3) UI rework ✅ (2026-10-29, branch `ui-rework`).
 - Phases B-E of the roadmap aren't scheduled yet.
 - Approach / constraints: _none given yet_.
 
@@ -49,7 +50,7 @@
 16. Multiple coordinators sharing state (Redis/etcd), and leader-only repair.
 17. Merkle/digest-based repair instead of listing every doc (issue 30); hedged reads (issue 31).
 
-**UI rework (after the roadmap is agreed)**: replace the single HTML file with a Vite + React + TypeScript app.
+**UI rework** ✅ done 2026-10-29: replaced the single HTML file with a Vite + React + TypeScript app.
 Views: chat with streamed answers and source cards (shard badges, scores), document manager (upload, list, delete, placement),
 live cluster topology (ring view, node health, vector counts, repair activity), and per-query telemetry (per-shard latency, degraded flag).
 
@@ -64,9 +65,12 @@ live cluster topology (ring view, node health, vector counts, repair activity), 
 | 2026-10-29 | Claude provider defaults to `claude-opus-5-5`, effort `medium`, server-side refusal fallback on | Current default model; configurable via `CLAUDE_MODEL` / `CLAUDE_EFFORT` |
 | 2026-10-29 | SSE (not WebSockets) for answer streaming and cluster events | One-way server→browser traffic; works with plain `fetch`/`EventSource`, no extra dependency |
 | 2026-10-29 | Chaos = shard-side `SetFault` RPC behind `CHAOS_ENABLED` (default off), not killing processes | Works the same in Docker and locally; the coordinator doesn't need process control |
+| 2026-10-29 | UI: Vite + React + TS with no UI/icon/chart libraries; hand-written CSS tokens, light + dark | Small bundle (~58 KB gzip JS) and nothing to keep in sync; the views are simple enough |
+| 2026-10-29 | The coordinator serves `frontend/dist` at `/`; the Vite dev server proxies `/api` | One origin in both modes, no CORS setup, one port in Docker |
 | 2026-10-29 | Proto regenerated with grpcio-tools 1.85 ⇒ requires grpcio ≥ 1.85, protobuf ≥ 7.35.1 | Generated code enforces these minimums at import |
 
 ## Session log
 - **2026-10-25**: Read the whole codebase. Created `CLAUDE.md`, `docs/ARCHITECTURE.md`, `docs/MEMORY.md` and `docs/KNOWN_ISSUES.md` (26 issues). Waiting for the user's plan.
 - **2026-10-29**: User asked to fix the issues and plan the next steps, with the UI after. Fixed 1-4, 6-11 and 13-26, and partly fixed 5 (re-replication done, no disk persistence). Added 3 RPCs (Delete/List/Fetch), doc versions, upsert, `DELETE /documents/{id}`, `POST /cluster/repair`, the repair loop with tombstones, `merge_results` dedup, generation-based cache invalidation, OTel instrumentation, multi-target Dockerfile, `requirements-shard.txt`, `pytest.ini`/`conftest.py`, and new tests (`test_faiss_store.py`, `test_repair.py`). Rewrote the chaos test, fixed README claims, and deleted `proto/` and the tracked pycache. Logged new issues 27-36. Wrote the roadmap above. Nothing committed.
 - **2026-10-29 (later)**: User said "commit it, then do phase A before the UI". Committed the fixes as `7a8c141` on new branch `fix-known-issues` (not pushed). On branch `phase-a-ui-backend`: added `GET /documents` and `GET /documents/{id}`, `POST /documents/upload`, `POST /query/stream` (SSE), `GET /cluster/events` (SSE) with `coordinator/events.py`, `GET /chaos` and `POST /chaos/shards/{id}` with the shard `SetFault` RPC. Also `shared/text_extraction.py`, `LLMGenerator.stream_answer`, `ListDocuments.metadata_json`, `FetchDocument.omit_embeddings`, and new deps python-multipart and pypdf. 10 new tests (29 total pass). Real-process smoke test passed: upload, streaming, a client disconnecting mid-stream, the event stream during a chaos down/up cycle, and clean shutdown. Logged issues 37-40.
+- **2026-10-29 (UI)**: User said "yes" (commit Phase A, then the UI). Phase A was already committed and pushed by the user as `fc9b117`. New branch `ui-rework`: replaced `frontend/index.html` with a Vite + React + TS app (Ask with streaming, citations and per-shard telemetry; Documents with upload, paste, catalog, drawer and delete; Cluster with ring chart, shard cards and chaos controls, repair, and the live feed). Backend tweaks: `replica_shards` on sources (fixes issue 33), `telemetry.shards_registered`, the coordinator serves `frontend/dist` at `/`, and a Dockerfile `ui` stage. Checked in headless Chromium (Playwright in the scratchpad, not the repo): upload, paste, ask, take down → degraded query → recover, light/dark, 390px mobile. No console errors. 29 pytest + 5 vitest pass. Not committed yet. Logged issues 41-44.

@@ -80,7 +80,7 @@ This project implements the foundational distributed systems primitives that pow
 - **Cache**: Redis (TTL + generation-based invalidation; in-process fallback when Redis is down)
 - **LLM Generator**: Swappable interface (Google Gemini, Anthropic Claude, or local Mock fallback)
 - **Observability**: OpenTelemetry (FastAPI + gRPC instrumentation) + Prometheus
-- **Frontend UI**: single-file React chat & topology visualizer (`frontend/index.html`, React UMD + in-browser Babel)
+- **Frontend UI**: Vite + React 18 + TypeScript console (`frontend/`): streaming chat, document manager, live cluster view with failure controls
 - **Testing**: `pytest`, `pytest-asyncio`, Locust (load testing), custom Chaos script
 
 ---
@@ -142,8 +142,19 @@ python scripts/seed_documents.py
 
 See `docs/ARCHITECTURE.md` for the full list.
 
-### 3. Launch React Frontend UI
-Open `frontend/index.html` directly in any modern web browser or serve via HTTP.
+### 3. Web UI
+```bash
+cd frontend && npm install
+npm run dev        # http://localhost:5173, proxies /api to the coordinator on :8000 (override with COORDINATOR_URL)
+# or build once and let the coordinator serve it at http://localhost:8000/
+npm run build
+```
+The UI has three views:
+- **Ask**: answers stream in token by token. Each answer shows its source cards (score, the shard that served the chunk, and replicas that returned it too) and per-shard latency for that query.
+- **Documents**: drag-and-drop `.txt`/`.md`/`.pdf` upload or pasted text, the catalog with replica placement and replication health, a chunk viewer, and delete.
+- **Cluster**: the hash-ring share chart, shard health and vector counts, the live activity feed (Server-Sent Events), Run repair, and, with `CHAOS_ENABLED=true`, buttons to take a shard down, slow it, or wipe it and watch failover and repair happen.
+
+`docker compose up --build` builds the UI into the coordinator image, so it's served at http://localhost:8000/.
 
 ---
 

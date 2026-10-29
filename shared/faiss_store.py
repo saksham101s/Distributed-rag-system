@@ -19,6 +19,7 @@ class SearchResult(BaseModel):
     metadata: Dict[str, Any]
     shard_id: Optional[str] = None
     doc_version: int = 0
+    replica_shards: List[str] = []  # other shards that returned this same chunk (set by the coordinator merge)
 
 
 class DocumentInfo(BaseModel):

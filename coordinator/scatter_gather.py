@@ -28,14 +28,20 @@ class ScatterGatherEngine:
             latest_version[r.doc_id] = max(latest_version.get(r.doc_id, 0), r.doc_version)
 
         best: Dict[str, SearchResult] = {}
+        holders: Dict[str, List[str]] = {}
         for r in results:
             if r.doc_version < latest_version[r.doc_id] or r.score < score_threshold:
                 continue
+            holders.setdefault(r.chunk_id, []).append(r.shard_id)
             kept = best.get(r.chunk_id)
             if kept is None or r.score > kept.score:
                 best[r.chunk_id] = r
 
-        return sorted(best.values(), key=lambda x: x.score, reverse=True)[:top_k]
+        merged = sorted(best.values(), key=lambda x: x.score, reverse=True)[:top_k]
+        return [
+            r.model_copy(update={"replica_shards": sorted(s for s in holders[r.chunk_id] if s and s != r.shard_id)})
+            for r in merged
+        ]
 
     async def execute_scatter_gather(
         self,

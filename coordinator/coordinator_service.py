@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Literal, Optional, Tuple
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
 from pydantic import BaseModel, Field
@@ -570,6 +571,7 @@ def _format_sources(results: List[SearchResult]) -> List[Dict[str, Any]]:
             "text": r.text,
             "score": round(r.score, 4),
             "shard_id": r.shard_id,
+            "replica_shards": r.replica_shards,
             "metadata": r.metadata
         }
         for r in results
@@ -581,9 +583,12 @@ async def _retrieve(query: str, top_k: int) -> Tuple[List[SearchResult], Dict[st
     with span("embed_query"):
         query_vec = await asyncio.to_thread(embeddings_engine.embed_text, query)
     active_stubs = await coordinator.get_active_stubs()
-    return await coordinator.scatter_gather.execute_scatter_gather(
+    results, telemetry = await coordinator.scatter_gather.execute_scatter_gather(
         query_vector=query_vec, shard_stubs=active_stubs, top_k=top_k
     )
+    # Shards already out of the ring aren't queried, so they don't count as "degraded"; report them separately
+    telemetry["shards_registered"] = len(coordinator.nodes)
+    return results, telemetry
 
 
 def _require_chaos():
@@ -836,6 +841,14 @@ async def inject_fault(shard_id: str, req: FaultInjectionRequest):
     crash-restart), `none` (recover). Requires CHAOS_ENABLED=true on the coordinator and the shards."""
     _require_chaos()
     return await coordinator.set_fault(shard_id, req.mode, req.latency_ms)
+
+
+# Serve the built UI (frontend/dist) at / when it exists. Mounted last so every API route above takes precedence.
+UI_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+if os.path.isdir(UI_DIST):
+    app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="ui")
+else:
+    logger.info(f"UI build not found at {UI_DIST}; run `npm run build` in frontend/ to serve it from the coordinator.")
 
 
 if __name__ == "__main__":

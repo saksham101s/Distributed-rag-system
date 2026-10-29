@@ -1,7 +1,7 @@
 # Architecture — Distributed RAG System
 
 > Source of truth for *how the code works today*. Keep it in sync with the code.
-> Last verified against code: 2026-10-29 (branch `phase-a-ui-backend`, on top of `7a8c141`).
+> Last verified against code: 2026-10-29 (branch `ui-rework`, on top of `fc9b117`).
 
 ## 1. What it is
 
@@ -15,10 +15,10 @@ A sharded, replicated vector-search + RAG backend in Python:
   version info. Plain storage: no embedding, no hashing, no knowledge of other shards.
 - **Redis**: query-result cache (falls back to an in-process dict with TTL if Redis is unreachable).
 - **Prometheus**: scrapes the coordinator's `/metrics`.
-- **Frontend**: single `frontend/index.html` (React 18.3.1 UMD + Babel standalone 7.26.10, pinned), talks to `http://localhost:8000`.
+- **Frontend**: Vite + React 18 + TypeScript app in `frontend/`. In dev it runs on :5173 and proxies `/api` to the coordinator; in production the coordinator serves `frontend/dist` at `/`. It uses only the REST + SSE API (no polling).
 
 ```
-Browser (frontend/index.html)
+Browser (frontend/, served from frontend/dist)
    │ HTTP JSON
    ▼
 Coordinator (coordinator/coordinator_service.py)
@@ -70,7 +70,12 @@ Shard nodes ×3 (shard_node/shard_service.py) → FAISSVectorStore (shared/faiss
 | `Dockerfile` | Multi-target: `shard` (requirements-shard.txt only) and `coordinator` (CPU torch, full requirements, embedding model pre-downloaded). |
 | `docker-compose.yml`, `docker/prometheus.yml` | Coordinator (with `SHARD_NODES` using service names), 3 shards, redis, prometheus. |
 | `requirements.txt` / `requirements-shard.txt` | Full stack (includes `-r requirements-shard.txt`) / shard runtime only. |
-| `frontend/index.html` | Chat UI + ingest form + topology panel polling `/cluster/status` every 2s. |
+| `frontend/` | Vite + React + TS UI (deps: react, react-dom; dev: vite, typescript, vitest). `npm run dev` / `build` / `test` / `typecheck`. |
+| `frontend/src/lib/api.ts` | Typed API client, `createSseParser()`, `streamQuery()` (POST + streamed body; EventSource can't POST). |
+| `frontend/src/hooks/useClusterEvents.ts` | One `EventSource` on `/cluster/events` → `{status, events (dedup by id, newest first, max 200), connected, catalogVersion}`. `catalogVersion` bumps on events that can change the doc list. |
+| `frontend/src/App.tsx` | Shell: top bar (health from the event stream), hash-routed tabs `#/ask`, `#/documents`, `#/cluster`. The Ask view stays mounted (hidden) so the conversation survives tab switches. `ShardsContext` gives every shard a stable color slot. |
+| `frontend/src/components/` | `ChatView` (streaming turns, stop, citation chips), `AnswerParts` (`AnswerText`, `SourceCard`, `TelemetryStrip`), `DocumentsView` (upload, paste, catalog table, detail drawer, two-step delete), `ClusterView` (stat tiles, `RingChart`, `ShardCard` + chaos controls, `EventFeed`), `ui.tsx` (badges, pills, panels), `Icon.tsx` (inline SVG). |
+| `frontend/src/styles.css` | Design tokens with light + dark themes (`prefers-color-scheme`), 6 shard color slots, responsive breakpoints at 960px and 640px. |
 
 ## 3. REST API (coordinator)
 
@@ -89,8 +94,11 @@ Shard nodes ×3 (shard_node/shard_service.py) → FAISSVectorStore (shared/faiss
 | `POST /api/v1/chaos/shards/{shard_id}` | `{mode: down\|slow\|wipe\|none, latency_ms}` | 403 unless `CHAOS_ENABLED`; runs a heartbeat right away; `wipe` also requests repair |
 | `POST /api/v1/cluster/repair` | none | repair summary `{copied, trimmed, tombstoned, errors[], documents_seen, shards[], duration_ms, finished_at}` |
 | `GET /metrics` | none | Prometheus text |
+| `GET /` | none | Built UI (`frontend/dist`), mounted last, only if the build exists |
 
-Query `telemetry`: `total_scatter_latency_ms, shards_queried, shards_successful, candidates_retrieved, unique_results, degraded, errors[], shard_metrics{shard: {status, latency_ms, items_retrieved, error?}}`.
+Query `telemetry`: `total_scatter_latency_ms, shards_queried, shards_successful, shards_registered, candidates_retrieved, unique_results, degraded, errors[], shard_metrics{shard: {status, latency_ms, items_retrieved, error?}}`.
+`shards_registered > shards_queried` means some shards were out of the ring (down) when the query ran; that isn't counted as `degraded`.
+Each source also has `replica_shards[]`: the other shards that returned the same chunk, which the merge collapsed into one.
 
 ## 4. gRPC contract (`proto_gen/vector_service.proto`, package `vector_service`)
 
@@ -132,7 +140,7 @@ Records `tombstones[doc_id] = time_ns()` (in coordinator memory), sends `DeleteD
 1. Cache lookup (thread). Hit → `cached=True`.
 2. `embed_text` in a thread.
 3. Scatter `SearchVector(top_k)` to **all healthy shards**, per-shard timeout `SHARD_TIMEOUT_SECONDS`.
-4. `merge_results`: drop hits whose `doc_version` is older than the newest seen for that doc → dedup by `chunk_id` (keep best score) → drop `score < SCORE_THRESHOLD` → sort → `top_k`.
+4. `merge_results`: drop hits whose `doc_version` is older than the newest seen for that doc → dedup by `chunk_id` (keep best score, record the other shards in `replica_shards`) → drop `score < SCORE_THRESHOLD` → sort → `top_k`.
 5. LLM in a thread → format sources → observe latency → cache set **only if not degraded**.
 
 ### Heartbeat / membership
@@ -193,7 +201,7 @@ pip install -r requirements.txt
 python shard_node/shard_service.py --shard-id shard_0 --port 50051   # ×3 (50052, 50053)
 python coordinator/coordinator_service.py                             # :8000
 python scripts/seed_documents.py
-# open frontend/index.html
+(cd frontend && npm install && npm run dev)                          # UI on :5173 (or `npm run build`, then the coordinator serves it on :8000)
 python -m pytest -v                                                   # unit + integration (pytest.ini)
 python tests/chaos/chaos_test.py
 locust -f tests/load/locustfile.py --host=http://localhost:8000

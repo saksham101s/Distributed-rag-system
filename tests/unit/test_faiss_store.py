@@ -77,3 +77,5 @@ def test_merge_dedups_replicas_and_drops_stale_versions():
     ]
     merged = ScatterGatherEngine.merge_results(hits, top_k=5, score_threshold=0.2)
     assert [r.chunk_id for r in merged] == ["a", "c"]
+    assert merged[0].shard_id == "shard_0" and merged[0].replica_shards == ["shard_1"]
+    assert merged[1].replica_shards == []

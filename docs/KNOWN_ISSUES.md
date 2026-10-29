@@ -19,13 +19,13 @@
    per-shard digests (Merkle tree / hash of doc versions per ring range) at scale.
 31. **Reads broadcast to every healthy shard**: cost grows with shard count. No hedged requests or per-shard top-k tuning.
 32. **Exact search only** (`IndexFlatIP`): O(N) per query per shard. No IVF/HNSW option.
-33. **Source attribution after dedup**: when replicas return equal scores, the first shard to respond wins, so a query can
-   show every source from one shard even though the others answered too.
 34. **No auth, CORS `*`**, and no request size limits on ingest.
 35. `coordinator/baseline_rag.py` also binds port 8000, so it can't run next to the coordinator.
 36. No OTLP exporter or tracing backend (Jaeger/Tempo) in docker-compose; spans only go to the console.
-12. **Frontend** is a single HTML file with in-browser Babel (README now says so) and still polls `/cluster/status`.
-   The UI rework is next. The backend for it is done (Phase A): streaming answers, the event stream, the document catalog, upload and chaos controls.
+41. **UI has no auth**, like the API (see 34). The chaos buttons only appear when `CHAOS_ENABLED=true`.
+42. **No UI component tests**: only `lib/` has vitest tests. The flows were checked by hand in headless Chromium (2026-10-29), but there is no Playwright suite in the repo or CI yet.
+43. **The Ask side panel is hidden below 960px**: on narrow screens, cluster status lives only in the top bar and the Cluster tab.
+44. **Chat history is in memory**: it's lost on page reload.
 
 37. **The document catalog lists every shard on every request**: `GET /documents` and `GET /documents/{id}` call
    `ListDocuments` on all healthy shards each time, so they're O(total docs). Pagination happens after the fan-out.
@@ -55,6 +55,8 @@
 21. `__pycache__` untracked; `.gitignore` and `.dockerignore` added.
 22. `generate_pdf_guide.py` defaults to `docs/ARCHITECTURE.md` and takes input/output paths.
 23. Multi-target Dockerfile: slim shard image (`requirements-shard.txt`), coordinator image with CPU torch and the model baked in.
-24. Frontend CDN scripts pinned (React 18.3.1 production builds, Babel 7.26.10).
+24. Frontend CDN scripts pinned (React 18.3.1 production builds, Babel 7.26.10). Superseded by the Vite build (no CDN scripts now).
 25. Shards validate embedding dimension; search errors return gRPC `INVALID_ARGUMENT`/`INTERNAL` instead of empty results.
 26. `pytest.ini` + `tests/conftest.py` added.
+12. Frontend rebuilt as a Vite + React + TS app driven by the SSE API (2026-10-29, branch `ui-rework`); the old single HTML file is removed.
+33. Source attribution: the merge now returns `replica_shards`, and the UI shows "also on …" (2026-10-29).
