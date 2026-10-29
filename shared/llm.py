@@ -1,4 +1,3 @@
-import os
 import logging
 from typing import List, Optional
 from pydantic import BaseModel
@@ -60,8 +59,9 @@ class LLMGenerator:
             answer = "Mock LLM Response: No relevant documents were retrieved from the vector index for your query."
         else:
             top_source = context_chunks[0]
+            shards = sorted({c.shard_id for c in context_chunks if c.shard_id})
             answer = (
-                f"Mock LLM Response (Synthesized from {len(context_chunks)} retrieved shards):\n"
+                f"Mock LLM Response (Synthesized from {len(context_chunks)} retrieved chunks across {len(shards)} shard(s)):\n"
                 f"Based on doc '{top_source.doc_id}' (relevance score {top_source.score:.4f}):\n"
                 f"\"{top_source.text}\"\n\n"
                 f"Summary: The document indicates that {top_source.text[:150]}..."
@@ -80,7 +80,7 @@ class LLMGenerator:
             from google import genai
             client = genai.Client(api_key=config.GEMINI_API_KEY)
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=config.GEMINI_MODEL,
                 contents=prompt,
             )
             return RAGResponse(
@@ -88,7 +88,7 @@ class LLMGenerator:
                 answer=response.text or "No text generated.",
                 sources=context_chunks,
                 provider_used="Google Gemini",
-                model_name="gemini-2.5-flash"
+                model_name=config.GEMINI_MODEL
             )
         except Exception as e:
             logger.warning(f"Gemini API call failed ({e}). Falling back to Mock generator.")
@@ -98,17 +98,24 @@ class LLMGenerator:
         try:
             import anthropic
             client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-            response = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=1000,
-                messages=[{"role": "user", "content": prompt}]
+            # Server-side fallback re-runs the request on another model if a safety classifier declines it
+            response = client.beta.messages.create(
+                model=config.CLAUDE_MODEL,
+                max_tokens=16000,
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+                output_config={"effort": config.CLAUDE_EFFORT},
+                messages=[{"role": "user", "content": prompt}],
             )
+            if response.stop_reason == "refusal":
+                raise RuntimeError(f"request refused ({getattr(response.stop_details, 'category', None)})")
+            answer = "".join(block.text for block in response.content if block.type == "text").strip()
             return RAGResponse(
                 query=query,
-                answer=response.content[0].text,
+                answer=answer or "No text generated.",
                 sources=context_chunks,
                 provider_used="Anthropic Claude",
-                model_name="claude-3-5-sonnet-20241022"
+                model_name=response.model,
             )
         except Exception as e:
             logger.warning(f"Claude API call failed ({e}). Falling back to Mock generator.")

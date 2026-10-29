@@ -1,0 +1,10 @@
+# Minimal runtime for shard nodes (no embedding model, no LLM SDKs)
+pydantic>=2.6.0
+numpy>=1.26.0
+faiss-cpu>=1.8.0
+grpcio>=1.85.0
+protobuf>=7.35.1
+prometheus-client>=0.20.0
+opentelemetry-api>=1.23.0
+opentelemetry-sdk>=1.23.0
+opentelemetry-instrumentation-grpc>=0.44b0

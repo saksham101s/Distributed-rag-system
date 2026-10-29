@@ -9,13 +9,17 @@ import json
 import logging
 import argparse
 import asyncio
+from typing import Dict, List
+
 import grpc
+import numpy as np
 
 from proto_gen import vector_service_pb2, vector_service_pb2_grpc
 
 from shared.faiss_store import FAISSVectorStore, SearchResult
 from shared.document_processor import DocumentChunk
 from shared.config import config
+from shared.telemetry import setup_telemetry, instrument_grpc_server
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("ShardNodeService")
@@ -30,104 +34,145 @@ class VectorStoreServicer(vector_service_pb2_grpc.VectorStoreServiceServicer):
         self.start_time = time.time()
 
     async def IngestVector(self, request: vector_service_pb2.IngestVectorRequest, context) -> vector_service_pb2.IngestVectorResponse:
-        """Ingests chunks into shard's local FAISS index."""
+        """Upserts chunks into the local FAISS index. Each doc_id in the request replaces any older copy of that doc."""
         start = time.perf_counter()
         try:
-            chunks = []
-            embeddings_list = []
-            
+            by_doc: Dict[str, List[vector_service_pb2.VectorChunk]] = {}
             for item in request.chunks:
-                meta = json.loads(item.metadata_json) if item.metadata_json else {}
-                chunk = DocumentChunk(
-                    chunk_id=item.chunk_id,
-                    doc_id=item.doc_id,
-                    text=item.text,
-                    chunk_index=item.chunk_index,
-                    metadata=meta
-                )
-                chunks.append(chunk)
-                embeddings_list.append(list(item.embedding))
+                if len(item.embedding) != config.EMBEDDING_DIM:
+                    raise ValueError(
+                        f"chunk {item.chunk_id}: embedding has {len(item.embedding)} dims, expected {config.EMBEDDING_DIM}"
+                    )
+                by_doc.setdefault(item.doc_id, []).append(item)
 
-            if chunks:
-                import numpy as np
-                vec_np = np.array(embeddings_list, dtype=np.float32)
-                self.vector_store.add_chunks(chunks, vec_np)
+            inserted, skipped = 0, []
+            for doc_id, items in by_doc.items():
+                chunks = [
+                    DocumentChunk(
+                        chunk_id=item.chunk_id,
+                        doc_id=item.doc_id,
+                        text=item.text,
+                        chunk_index=item.chunk_index,
+                        metadata=json.loads(item.metadata_json) if item.metadata_json else {},
+                    )
+                    for item in items
+                ]
+                vecs = np.array([list(item.embedding) for item in items], dtype=np.float32)
+                applied = self.vector_store.upsert_document(
+                    doc_id, chunks, vecs,
+                    version=items[0].doc_version,
+                    replication_factor=items[0].replication_factor,
+                )
+                if applied:
+                    inserted += len(chunks)
+                else:
+                    skipped.append(doc_id)
 
             elapsed_ms = (time.perf_counter() - start) * 1000.0
-            logger.info(f"[{self.shard_id}] Ingested {len(chunks)} chunks in {elapsed_ms:.2f}ms (Total count: {self.vector_store.count()})")
-            
-            return vector_service_pb2.IngestVectorResponse(
-                success=True,
-                inserted_count=len(chunks),
-                message=f"[{self.shard_id}] Successfully ingested {len(chunks)} vectors."
+            source = "repair" if request.is_replica_sync else "ingest"
+            logger.info(
+                f"[{self.shard_id}] {source}: upserted {inserted} chunks in {elapsed_ms:.2f}ms "
+                f"(stale skipped: {skipped or 'none'}, total vectors: {self.vector_store.count()})"
             )
+            message = f"[{self.shard_id}] Upserted {inserted} vectors."
+            if skipped:
+                message += f" Skipped stale writes for: {', '.join(skipped)}."
+            return vector_service_pb2.IngestVectorResponse(success=True, inserted_count=inserted, message=message)
         except Exception as e:
             logger.error(f"[{self.shard_id}] Ingest error: {e}")
-            return vector_service_pb2.IngestVectorResponse(
-                success=False,
-                inserted_count=0,
-                message=str(e)
-            )
+            return vector_service_pb2.IngestVectorResponse(success=False, inserted_count=0, message=str(e))
 
     async def SearchVector(self, request: vector_service_pb2.SearchRequest, context) -> vector_service_pb2.SearchResponse:
         """Executes similarity vector search on local FAISS index."""
         start = time.perf_counter()
+        if len(request.query_vector) != config.EMBEDDING_DIM:
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                f"query_vector has {len(request.query_vector)} dims, expected {config.EMBEDDING_DIM}",
+            )
         try:
-            import numpy as np
             query_vec = np.array(request.query_vector, dtype=np.float32)
-            top_k = request.top_k or 5
+            results: List[SearchResult] = self.vector_store.search(query_vec, top_k=request.top_k or config.DEFAULT_TOP_K)
 
-            results: List[SearchResult] = self.vector_store.search(query_vec, top_k=top_k)
-            
-            pb_items = []
-            for r in results:
-                pb_items.append(vector_service_pb2.SearchResultItem(
+            pb_items = [
+                vector_service_pb2.SearchResultItem(
                     chunk_id=r.chunk_id,
                     doc_id=r.doc_id,
                     text=r.text,
                     score=r.score,
                     chunk_index=r.chunk_index,
                     metadata_json=json.dumps(r.metadata),
-                    shard_id=self.shard_id
-                ))
+                    shard_id=self.shard_id,
+                    doc_version=r.doc_version,
+                )
+                for r in results
+            ]
 
             elapsed_ms = (time.perf_counter() - start) * 1000.0
             logger.info(f"[{self.shard_id}] Vector search completed in {elapsed_ms:.2f}ms. Returned {len(pb_items)} items.")
-            
-            return vector_service_pb2.SearchResponse(
-                results=pb_items,
-                shard_id=self.shard_id,
-                latency_ms=elapsed_ms
-            )
+            return vector_service_pb2.SearchResponse(results=pb_items, shard_id=self.shard_id, latency_ms=elapsed_ms)
         except Exception as e:
             logger.error(f"[{self.shard_id}] Search error: {e}")
-            return vector_service_pb2.SearchResponse(
-                results=[],
-                shard_id=self.shard_id,
-                latency_ms=0.0
-            )
+            await context.abort(grpc.StatusCode.INTERNAL, f"search failed: {e}")
 
     async def HealthCheck(self, request: vector_service_pb2.HealthCheckRequest, context) -> vector_service_pb2.HealthCheckResponse:
         """Returns node health, vector count, and uptime."""
-        uptime = time.time() - self.start_time
         return vector_service_pb2.HealthCheckResponse(
             shard_id=self.shard_id,
             healthy=True,
             vector_count=self.vector_store.count(),
-            uptime_seconds=uptime
+            uptime_seconds=time.time() - self.start_time,
         )
+
+    async def DeleteDocument(self, request: vector_service_pb2.DeleteDocumentRequest, context) -> vector_service_pb2.DeleteDocumentResponse:
+        """Removes every chunk of a document (optionally only if older than `below_version`)."""
+        deleted = self.vector_store.delete_by_doc_id(request.doc_id, below_version=request.below_version)
+        return vector_service_pb2.DeleteDocumentResponse(deleted_count=deleted)
+
+    async def ListDocuments(self, request: vector_service_pb2.ListDocumentsRequest, context) -> vector_service_pb2.ListDocumentsResponse:
+        """Lists the documents held by this shard, with versions, for the coordinator's repair loop."""
+        return vector_service_pb2.ListDocumentsResponse(documents=[
+            vector_service_pb2.DocumentSummary(
+                doc_id=info.doc_id,
+                doc_version=info.version,
+                chunk_count=info.chunk_count,
+                replication_factor=info.replication_factor,
+            )
+            for info in self.vector_store.list_documents()
+        ])
+
+    async def FetchDocument(self, request: vector_service_pb2.FetchDocumentRequest, context) -> vector_service_pb2.FetchDocumentResponse:
+        """Returns a document's chunks with their embeddings so it can be copied to another shard."""
+        info, chunks, vecs = self.vector_store.get_document(request.doc_id)
+        if info is None:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"doc '{request.doc_id}' not on {self.shard_id}")
+        return vector_service_pb2.FetchDocumentResponse(chunks=[
+            vector_service_pb2.VectorChunk(
+                chunk_id=c.chunk_id,
+                doc_id=c.doc_id,
+                text=c.text,
+                chunk_index=c.chunk_index,
+                metadata_json=json.dumps(c.metadata),
+                embedding=vecs[i].tolist(),
+                doc_version=info.version,
+                replication_factor=info.replication_factor,
+            )
+            for i, c in enumerate(chunks)
+        ])
 
 
 async def serve(shard_id: str, port: int):
     """Starts gRPC AsyncIO server for the shard node."""
+    setup_telemetry(config.TRACING_EXPORTER)
+    instrument_grpc_server()
     server = grpc.aio.server()
     servicer = VectorStoreServicer(shard_id=shard_id)
     vector_service_pb2_grpc.add_VectorStoreServiceServicer_to_server(servicer, server)
-    
+
     listen_addr = f"0.0.0.0:{port}"
     server.add_insecure_port(listen_addr)
     logger.info(f"Starting gRPC Shard Node [{shard_id}] listening on {listen_addr}...")
-    
+
     await server.start()
     try:
         await server.wait_for_termination()

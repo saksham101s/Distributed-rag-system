@@ -1,6 +1,6 @@
 # Distributed RAG System (Sharded Vector Search, Consistent Hashing & gRPC Scatter-Gather)
 
-A production-grade, fault-tolerant **Distributed Retrieval-Augmented Generation (RAG)** infrastructure built in Python using FastAPI, gRPC, FAISS, Redis, OpenTelemetry, Prometheus, and React.
+A production-grade, fault-tolerant **Distributed Retrieval-Augmented Generation (RAG)** infrastructure built in Python using FastAPI, gRPC, FAISS, Redis, OpenTelemetry, Prometheus, and a single-page React UI.
 
 This project implements the foundational distributed systems primitives that power real-world vector databases (Pinecone, Milvus, Qdrant) and enterprise RAG platforms.
 
@@ -46,25 +46,27 @@ This project implements the foundational distributed systems primitives that pow
 2. **gRPC Scatter-Gather Concurrent Fan-Out** (`coordinator/scatter_gather.py`):
    - Coordinator fans query out across active shard nodes concurrently using `asyncio.gather` over gRPC.
    - Enforces per-shard timeouts ($1.5s$) to isolate slow/dead nodes without blocking the entire request.
-   - Merges candidate chunks across shards and re-ranks top-$K$ by inner-product similarity score.
+   - Merges candidate chunks across shards, de-duplicates replica hits by `chunk_id`, drops chunks from stale document versions, and re-ranks top-$K$ by inner-product similarity score.
 
-3. **Replication & Quorum Reads** ($N=2$):
-   - Each document is routed to primary and replica target shards.
-   - Supports AP (Available/Partition-Tolerant) read strategies: `FASTEST_REPLICA` vs `READ_QUORUM`.
+3. **Replication, Upserts & Anti-Entropy Repair** ($N=2$):
+   - Each document is written to its primary and replica shards; the ingest response reports which shards acked (`success` / `partial`).
+   - Re-ingesting a `doc_id` is an upsert: every write carries a version and shards ignore older versions.
+   - A repair loop (on every membership change, plus every 30s) copies missing or stale replicas and trims copies the ring no longer assigns, so a crashed shard is re-filled when it comes back empty.
+   - Reads fan out to every healthy shard (AP bias), so they survive the loss of any one replica.
 
 4. **Heartbeat Failure Detection & Self-Healing Ring**:
    - Background monitor pings gRPC `HealthCheck` endpoints every $2s$.
-   - Automatically removes dead shards from the ring and restores them upon recovery.
+   - Automatically removes dead shards from the ring, restores them upon recovery, and triggers a repair pass.
 
 5. **Redis Caching & Invalidation**:
-   - Query result cache with TTL and explicit invalidation upon document ingestion.
+   - Query result cache with TTL. Invalidation on ingest/delete is O(1): keys carry a generation number that gets bumped.
 
 6. **End-to-End Observability**:
-   - OpenTelemetry tracing across REST $\rightarrow$ Coordinator $\rightarrow$ gRPC $\rightarrow$ FAISS $\rightarrow$ LLM.
-   - Prometheus metrics endpoint at `/metrics`.
+   - OpenTelemetry spans for REST requests (FastAPI instrumentor), every coordinator→shard gRPC call (client + server instrumentors, context propagated), embedding and LLM calls. Set `TRACING_EXPORTER=console` to print them.
+   - Prometheus metrics at `/metrics`: query latency, cache hits, per-shard request latency, node health, ingests, repair operations.
 
-7. **Automated Mid-Query Chaos Testing** (`tests/chaos/chaos_test.py`):
-   - Starts a 3-shard cluster, ingests documents, SIGKILLs a shard container mid-query, and verifies that queries succeed from replica nodes.
+7. **Automated Chaos Testing** (`tests/chaos/chaos_test.py`):
+   - Starts 3 shard processes, ingests documents, SIGKILLs a shard while a burst of queries is in flight, and checks every query is answered from replicas. Then it restarts the shard empty and verifies repair puts every document back on its ring-assigned replicas.
 
 ---
 
@@ -75,10 +77,10 @@ This project implements the foundational distributed systems primitives that pow
 - **Embeddings**: Local `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional dense vectors)
 - **Vector Search Engine**: FAISS (`IndexFlatIP` with L2 normalization for exact cosine similarity)
 - **Sharding**: Pure Python Consistent Hash Ring with virtual nodes
-- **Cache & Queue**: Redis (TTL + explicit invalidation)
+- **Cache**: Redis (TTL + generation-based invalidation; in-process fallback when Redis is down)
 - **LLM Generator**: Swappable interface (Google Gemini, Anthropic Claude, or local Mock fallback)
-- **Observability**: OpenTelemetry + Prometheus Exporter
-- **Frontend UI**: Modern Glassmorphism React Chat & Topology Visualizer
+- **Observability**: OpenTelemetry (FastAPI + gRPC instrumentation) + Prometheus
+- **Frontend UI**: single-file React chat & topology visualizer (`frontend/index.html`, React UMD + in-browser Babel)
 - **Testing**: `pytest`, `pytest-asyncio`, Locust (load testing), custom Chaos script
 
 ---
@@ -112,7 +114,31 @@ python shard_node/shard_service.py --shard-id shard_2 --port 50053
 **Terminal 4: Coordinator REST API (port 8000)**
 ```bash
 python coordinator/coordinator_service.py
+# Shard addresses come from SHARD_NODES (default: shard_0=localhost:50051,shard_1=localhost:50052,shard_2=localhost:50053)
 ```
+
+**Or everything at once with Docker:**
+```bash
+docker compose up --build   # coordinator, 3 shards, redis, prometheus
+```
+
+**Seed sample documents:**
+```bash
+python scripts/seed_documents.py
+```
+
+### Configuration (env vars)
+| Variable | Default | Meaning |
+|---|---|---|
+| `SHARD_NODES` | `shard_0=localhost:50051,...` | Shards the coordinator manages |
+| `REPLICATION_FACTOR` | `2` | Default copies per document |
+| `REPAIR_INTERVAL_SECONDS` | `30` | Periodic repair pass (0 = only on membership change) |
+| `LLM_PROVIDER` | `mock` | `mock`, `gemini` or `claude` (needs `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`) |
+| `CLAUDE_MODEL` / `GEMINI_MODEL` | `claude-opus-5-5` / `gemini-2.5-flash` | Model used by each provider |
+| `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | Query cache |
+| `TRACING_EXPORTER` | `none` | `console` prints OpenTelemetry spans |
+
+See `docs/ARCHITECTURE.md` for the full list.
 
 ### 3. Launch React Frontend UI
 Open `frontend/index.html` directly in any modern web browser or serve via HTTP.
@@ -123,10 +149,10 @@ Open `frontend/index.html` directly in any modern web browser or serve via HTTP.
 
 ### 1. Run Unit & Integration Test Suite
 ```bash
-python -m pytest tests/unit/test_baseline.py tests/unit/test_consistent_hash.py tests/integration/test_scatter_gather.py -v
+python -m pytest -v   # pytest.ini points at tests/unit and tests/integration
 ```
 
-### 2. Run Automated Chaos Test (Mid-Query Node Crash & Recovery)
+### 2. Run Automated Chaos Test (Shard Crash During Queries, Recovery & Repair)
 ```bash
 python tests/chaos/chaos_test.py
 ```
@@ -142,13 +168,14 @@ locust -f tests/load/locustfile.py --host=http://localhost:8000
 
 ### CAP Theorem Tradeoffs
 - **AP Bias (Availability over Consistency)**: Distributed search engines prioritize returning low-latency partial results over blocking queries for strict global linearizability.
-- **Read Quorum vs Fastest Replica**: For latency-sensitive workloads ($R=1$), queries hit the fastest replica. For strict read consistency ($R=2$), reads wait for quorum agreement.
+- **Why reads broadcast**: a semantic query isn't keyed by `doc_id`, so it can't be routed to a single replica set. Every healthy shard is searched, replica hits are de-duplicated, and losing one replica only costs that shard's latency budget. Versions on every chunk let the merge drop results from a stale replica.
+- **Eventual consistency for writes**: a write succeeds if at least one target shard acks; the repair loop converges the remaining replicas.
 
 ### Consistent Hashing vs Static `hash % N`
 - Under static `hash % N`, adding a single node causes $\frac{N-1}{N}$ (e.g. $75\%-90\%$) of all keys to re-map, causing massive cache misses and network re-indexing storms.
 - Consistent hashing with virtual nodes ensures only $\frac{1}{N}$ ($\sim 25\%-33\%$) of keys migrate to the new node, keeping ring distribution balanced within $\pm 2\%$.
 
 ### Production Scaling Considerations (100x Growth)
-- **Ingestion Queue**: At higher scale, Redis Streams transitions to **Apache Kafka** for partitioned, multi-subscriber log streaming.
+- **Ingestion Queue**: Ingest is synchronous today; at higher scale it would move behind a durable log such as **Apache Kafka**.
 - **Vector Storage**: In-memory FAISS per container transitions to distributed ANN indices (HNSW / IVF-PQ in Milvus / Pinecone).
-- **Metadata**: In-memory dict transitions to PostgreSQL with read replicas.
+- **Metadata & durability**: Shard indexes and metadata live in process memory today (repair restores lost replicas from surviving copies); next step is snapshotting to disk and a metadata store such as PostgreSQL.

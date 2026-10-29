@@ -9,12 +9,14 @@ message VectorChunk {
   int32 chunk_index = 4;
   string metadata_json = 5;
   repeated float embedding = 6;
+  int64 doc_version = 7;          // coordinator-assigned version (ns timestamp); newer wins
+  int32 replication_factor = 8;   // desired copies of this doc, used by repair
 }
 
 message IngestVectorRequest {
   string shard_id = 1;
   repeated VectorChunk chunks = 2;
-  bool is_replica_sync = 3;
+  bool is_replica_sync = 3;  // true when written by the repair loop, not a client ingest
 }
 
 message IngestVectorResponse {
@@ -37,6 +39,7 @@ message SearchResultItem {
   int32 chunk_index = 5;
   string metadata_json = 6;
   string shard_id = 7;
+  int64 doc_version = 8;
 }
 
 message SearchResponse {
@@ -56,8 +59,41 @@ message HealthCheckResponse {
   float uptime_seconds = 4;
 }
 
+message DeleteDocumentRequest {
+  string doc_id = 1;
+  int64 below_version = 2;  // only delete if stored version < this; 0 = delete unconditionally
+}
+
+message DeleteDocumentResponse {
+  int32 deleted_count = 1;
+}
+
+message ListDocumentsRequest {}
+
+message DocumentSummary {
+  string doc_id = 1;
+  int64 doc_version = 2;
+  int32 chunk_count = 3;
+  int32 replication_factor = 4;
+}
+
+message ListDocumentsResponse {
+  repeated DocumentSummary documents = 1;
+}
+
+message FetchDocumentRequest {
+  string doc_id = 1;
+}
+
+message FetchDocumentResponse {
+  repeated VectorChunk chunks = 1;  // includes embeddings, for re-replication
+}
+
 service VectorStoreService {
   rpc IngestVector(IngestVectorRequest) returns (IngestVectorResponse);
   rpc SearchVector(SearchRequest) returns (SearchResponse);
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+  rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
+  rpc FetchDocument(FetchDocumentRequest) returns (FetchDocumentResponse);
 }

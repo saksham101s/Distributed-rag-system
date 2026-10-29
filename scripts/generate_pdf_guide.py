@@ -1,12 +1,19 @@
-import os
+"""Wraps a Markdown file into printable HTML (print to PDF from the browser).
 
-MD_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "SYSTEM_ARCHITECTURE_GUIDE.md"))
-HTML_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "SYSTEM_ARCHITECTURE_GUIDE.html"))
+Usage: python scripts/generate_pdf_guide.py [input.md] [output.html]
+Defaults to docs/ARCHITECTURE.md -> SYSTEM_ARCHITECTURE_GUIDE.html.
+"""
+import os
+import sys
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+MD_PATH = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(ROOT, "docs", "ARCHITECTURE.md")
+HTML_PATH = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else os.path.join(ROOT, "SYSTEM_ARCHITECTURE_GUIDE.html")
 
 def convert_md_to_printable_html():
     if not os.path.exists(MD_PATH):
         print(f"Error: {MD_PATH} not found.")
-        return
+        sys.exit(1)
 
     with open(MD_PATH, "r", encoding="utf-8") as f:
         md_content = f.read()

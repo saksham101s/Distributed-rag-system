@@ -3,13 +3,9 @@
 import grpc
 import warnings
 
-try:
-    from proto_gen import vector_service_pb2 as vector__service__pb2
-except ImportError:
-    import vector_service_pb2 as vector__service__pb2
+from proto_gen import vector_service_pb2 as vector__service__pb2
 
-
-GRPC_GENERATED_VERSION = '1.83.0'
+GRPC_GENERATED_VERSION = '1.85.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -53,6 +49,21 @@ class VectorStoreServiceStub:
                 request_serializer=vector__service__pb2.HealthCheckRequest.SerializeToString,
                 response_deserializer=vector__service__pb2.HealthCheckResponse.FromString,
                 _registered_method=True)
+        self.DeleteDocument = channel.unary_unary(
+                '/vector_service.VectorStoreService/DeleteDocument',
+                request_serializer=vector__service__pb2.DeleteDocumentRequest.SerializeToString,
+                response_deserializer=vector__service__pb2.DeleteDocumentResponse.FromString,
+                _registered_method=True)
+        self.ListDocuments = channel.unary_unary(
+                '/vector_service.VectorStoreService/ListDocuments',
+                request_serializer=vector__service__pb2.ListDocumentsRequest.SerializeToString,
+                response_deserializer=vector__service__pb2.ListDocumentsResponse.FromString,
+                _registered_method=True)
+        self.FetchDocument = channel.unary_unary(
+                '/vector_service.VectorStoreService/FetchDocument',
+                request_serializer=vector__service__pb2.FetchDocumentRequest.SerializeToString,
+                response_deserializer=vector__service__pb2.FetchDocumentResponse.FromString,
+                _registered_method=True)
 
 
 class VectorStoreServiceServicer:
@@ -76,6 +87,24 @@ class VectorStoreServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def DeleteDocument(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListDocuments(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def FetchDocument(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_VectorStoreServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -93,6 +122,21 @@ def add_VectorStoreServiceServicer_to_server(servicer, server):
                     servicer.HealthCheck,
                     request_deserializer=vector__service__pb2.HealthCheckRequest.FromString,
                     response_serializer=vector__service__pb2.HealthCheckResponse.SerializeToString,
+            ),
+            'DeleteDocument': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteDocument,
+                    request_deserializer=vector__service__pb2.DeleteDocumentRequest.FromString,
+                    response_serializer=vector__service__pb2.DeleteDocumentResponse.SerializeToString,
+            ),
+            'ListDocuments': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListDocuments,
+                    request_deserializer=vector__service__pb2.ListDocumentsRequest.FromString,
+                    response_serializer=vector__service__pb2.ListDocumentsResponse.SerializeToString,
+            ),
+            'FetchDocument': grpc.unary_unary_rpc_method_handler(
+                    servicer.FetchDocument,
+                    request_deserializer=vector__service__pb2.FetchDocumentRequest.FromString,
+                    response_serializer=vector__service__pb2.FetchDocumentResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -176,6 +220,87 @@ class VectorStoreService:
             '/vector_service.VectorStoreService/HealthCheck',
             vector__service__pb2.HealthCheckRequest.SerializeToString,
             vector__service__pb2.HealthCheckResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteDocument(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/vector_service.VectorStoreService/DeleteDocument',
+            vector__service__pb2.DeleteDocumentRequest.SerializeToString,
+            vector__service__pb2.DeleteDocumentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListDocuments(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/vector_service.VectorStoreService/ListDocuments',
+            vector__service__pb2.ListDocumentsRequest.SerializeToString,
+            vector__service__pb2.ListDocumentsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def FetchDocument(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/vector_service.VectorStoreService/FetchDocument',
+            vector__service__pb2.FetchDocumentRequest.SerializeToString,
+            vector__service__pb2.FetchDocumentResponse.FromString,
             options,
             channel_credentials,
             insecure,

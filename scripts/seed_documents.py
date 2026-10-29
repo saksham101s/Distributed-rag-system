@@ -20,7 +20,7 @@ SAMPLE_DOCUMENTS = [
     },
     {
         "doc_id": "doc_replication_cap",
-        "text": "Replication in distributed RAG ensures fault tolerance by storing each document chunk across primary and replica shard nodes (Replication Factor N=2). In accordance with the CAP Theorem, retrieval platforms adopt an Available and Partition-Tolerant (AP) bias. Read operations can hit the fastest replica (R=1) for ultra-low latency or require a read quorum (R=2) for strong consistency. A background heartbeat monitor detects node crashes and automatically updates the active ring.",
+        "text": "Replication in distributed RAG ensures fault tolerance by storing each document chunk across primary and replica shard nodes (Replication Factor N=2). In accordance with the CAP Theorem, retrieval platforms adopt an Available and Partition-Tolerant (AP) bias. Reads fan out to every healthy shard and replicas are de-duplicated by chunk id, so a query still succeeds when one replica is down. A background heartbeat monitor detects node crashes and updates the active ring, and an anti-entropy repair loop re-copies documents until each is back on its ring-assigned replicas.",
         "replication_factor": 2
     }
 ]

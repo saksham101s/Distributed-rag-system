@@ -1,18 +1,19 @@
-version: '3.8'
-
 services:
   coordinator:
     build:
       context: .
-      dockerfile: Dockerfile
+      target: coordinator
     container_name: rag_coordinator
-    command: python coordinator/coordinator_service.py
     ports:
       - "8000:8000"
     environment:
+      - SHARD_NODES=shard_0=shard_0:50051,shard_1=shard_1:50052,shard_2=shard_2:50053
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - LLM_PROVIDER=mock
+      - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - REPLICATION_FACTOR=2
       - VIRTUAL_NODES=100
       - SHARD_TIMEOUT_SECONDS=1.5
     depends_on:
@@ -24,7 +25,7 @@ services:
   shard_0:
     build:
       context: .
-      dockerfile: Dockerfile
+      target: shard
     container_name: rag_shard_0
     command: python shard_node/shard_service.py --shard-id shard_0 --port 50051
     ports:
@@ -33,7 +34,7 @@ services:
   shard_1:
     build:
       context: .
-      dockerfile: Dockerfile
+      target: shard
     container_name: rag_shard_1
     command: python shard_node/shard_service.py --shard-id shard_1 --port 50052
     ports:
@@ -42,7 +43,7 @@ services:
   shard_2:
     build:
       context: .
-      dockerfile: Dockerfile
+      target: shard
     container_name: rag_shard_2
     command: python shard_node/shard_service.py --shard-id shard_2 --port 50053
     ports:
@@ -55,7 +56,7 @@ services:
       - "6379:6379"
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.53.0
     container_name: rag_prometheus
     ports:
       - "9090:9090"

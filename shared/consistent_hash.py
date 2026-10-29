@@ -8,7 +8,7 @@ logger = logging.getLogger("ConsistentHashRing")
 
 class ConsistentHashRing:
     """Hand-rolled Consistent Hash Ring with Virtual Nodes.
-    
+
     Maps document keys to physical shard nodes across a 32-bit integer ring space [0, 2^32 - 1].
     Virtual nodes ensure uniform key distribution across physical nodes and minimize key migration
     when nodes join or leave the cluster.
@@ -17,6 +17,7 @@ class ConsistentHashRing:
     def __init__(self, virtual_nodes_per_node: int = 150):
         self.virtual_nodes_per_node = virtual_nodes_per_node
         self.ring: List[Tuple[int, str]] = []  # Sorted list of (hash_value, physical_node_id)
+        self._hashes: List[int] = []           # Parallel list of hash values, kept for bisect
         self.physical_nodes: Set[str] = set()
 
     def _hash(self, key: str) -> int:
@@ -25,6 +26,9 @@ class ConsistentHashRing:
         # Take first 8 hex characters -> 32-bit unsigned int
         return int(digest[:8], 16)
 
+    def _rebuild_hashes(self):
+        self._hashes = [h_val for h_val, _ in self.ring]
+
     def add_node(self, node_id: str) -> bool:
         """Adds a physical node to the ring by creating virtual node entries."""
         if node_id in self.physical_nodes:
@@ -32,10 +36,9 @@ class ConsistentHashRing:
             return False
 
         self.physical_nodes.add(node_id)
-        for i in range(self.virtual_nodes_per_node):
-            vnode_key = f"{node_id}#vnode_{i}"
-            h_val = self._hash(vnode_key)
-            bisect.insort(self.ring, (h_val, node_id))
+        self.ring.extend((self._hash(f"{node_id}#vnode_{i}"), node_id) for i in range(self.virtual_nodes_per_node))
+        self.ring.sort()
+        self._rebuild_hashes()
 
         logger.info(f"Added physical node '{node_id}' ({self.virtual_nodes_per_node} vnodes). Total ring size: {len(self.ring)}")
         return True
@@ -47,7 +50,8 @@ class ConsistentHashRing:
             return False
 
         self.physical_nodes.remove(node_id)
-        self.ring = [(h_val, physical_id) for h_val, physical_id in self.ring if physical_id != node_id]
+        self.ring = [entry for entry in self.ring if entry[1] != node_id]
+        self._rebuild_hashes()
         logger.info(f"Removed physical node '{node_id}'. Total ring size: {len(self.ring)}")
         return True
 
@@ -61,42 +65,34 @@ class ConsistentHashRing:
         if not self.ring:
             return []
 
-        h_val = self._hash(key)
-        # Find index of first virtual node with hash >= h_val using binary search
-        ring_hashes = [entry[0] for entry in self.ring]
-        idx = bisect.bisect_right(ring_hashes, h_val) % len(self.ring)
+        # First virtual node clockwise from the key's hash (binary search on the cached hash list)
+        idx = bisect.bisect_right(self._hashes, self._hash(key)) % len(self.ring)
+        wanted = min(replication_factor, len(self.physical_nodes))
 
         selected_nodes: List[str] = []
-        visited_indices: Set[int] = set()
-        
-        # Traverse ring clockwise to collect 'replication_factor' unique physical nodes
-        curr_idx = idx
-        while len(selected_nodes) < min(replication_factor, len(self.physical_nodes)):
-            if curr_idx in visited_indices:
+        for step in range(len(self.ring)):
+            if len(selected_nodes) >= wanted:
                 break
-            visited_indices.add(curr_idx)
-
-            _, physical_id = self.ring[curr_idx]
+            _, physical_id = self.ring[(idx + step) % len(self.ring)]
             if physical_id not in selected_nodes:
                 selected_nodes.append(physical_id)
-
-            curr_idx = (curr_idx + 1) % len(self.ring)
 
         return selected_nodes
 
     def get_all_nodes(self) -> List[str]:
         """Returns list of all active physical nodes."""
-        return sorted(list(self.physical_nodes))
+        return sorted(self.physical_nodes)
 
     def ring_distribution(self) -> Dict[str, float]:
-        """Calculates percentage share of ring space owned by each physical node."""
+        """Calculates percentage share of the 32-bit key space owned (as primary) by each physical node."""
         if not self.ring:
             return {}
 
-        node_counts: Dict[str, int] = {node_id: 0 for node_id in self.physical_nodes}
-        total_slots = len(self.ring)
-        
-        for _, node_id in self.ring:
-            node_counts[node_id] += 1
+        space = 2 ** 32
+        owned: Dict[str, int] = {node_id: 0 for node_id in self.physical_nodes}
+        # Each vnode owns the arc from the previous vnode (exclusive) up to itself (inclusive)
+        for i, (h_val, node_id) in enumerate(self.ring):
+            prev = self.ring[i - 1][0] if i > 0 else self.ring[-1][0] - space
+            owned[node_id] += h_val - prev
 
-        return {node_id: round((count / total_slots) * 100, 2) for node_id, count in node_counts.items()}
+        return {node_id: round(arc / space * 100, 2) for node_id, arc in owned.items()}
