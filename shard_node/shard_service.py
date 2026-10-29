@@ -28,13 +28,24 @@ logger = logging.getLogger("ShardNodeService")
 class VectorStoreServicer(vector_service_pb2_grpc.VectorStoreServiceServicer):
     """gRPC Servicer implementing vector storage and similarity search for a single shard."""
 
-    def __init__(self, shard_id: str):
+    def __init__(self, shard_id: str, chaos_enabled: bool = config.CHAOS_ENABLED):
         self.shard_id = shard_id
         self.vector_store = FAISSVectorStore(dim=config.EMBEDDING_DIM, shard_id=shard_id)
         self.start_time = time.time()
+        self.chaos_enabled = chaos_enabled
+        self.fault_mode = "none"
+        self.fault_latency_ms = 0
+
+    async def _fault_gate(self, context):
+        """Applies the injected fault (if any) before serving an RPC."""
+        if self.fault_mode == "down":
+            await context.abort(grpc.StatusCode.UNAVAILABLE, f"[{self.shard_id}] injected fault: down")
+        elif self.fault_mode == "slow" and self.fault_latency_ms > 0:
+            await asyncio.sleep(self.fault_latency_ms / 1000.0)
 
     async def IngestVector(self, request: vector_service_pb2.IngestVectorRequest, context) -> vector_service_pb2.IngestVectorResponse:
         """Upserts chunks into the local FAISS index. Each doc_id in the request replaces any older copy of that doc."""
+        await self._fault_gate(context)
         start = time.perf_counter()
         try:
             by_doc: Dict[str, List[vector_service_pb2.VectorChunk]] = {}
@@ -84,6 +95,7 @@ class VectorStoreServicer(vector_service_pb2_grpc.VectorStoreServiceServicer):
 
     async def SearchVector(self, request: vector_service_pb2.SearchRequest, context) -> vector_service_pb2.SearchResponse:
         """Executes similarity vector search on local FAISS index."""
+        await self._fault_gate(context)
         start = time.perf_counter()
         if len(request.query_vector) != config.EMBEDDING_DIM:
             await context.abort(
@@ -117,6 +129,7 @@ class VectorStoreServicer(vector_service_pb2_grpc.VectorStoreServiceServicer):
 
     async def HealthCheck(self, request: vector_service_pb2.HealthCheckRequest, context) -> vector_service_pb2.HealthCheckResponse:
         """Returns node health, vector count, and uptime."""
+        await self._fault_gate(context)
         return vector_service_pb2.HealthCheckResponse(
             shard_id=self.shard_id,
             healthy=True,
@@ -126,23 +139,27 @@ class VectorStoreServicer(vector_service_pb2_grpc.VectorStoreServiceServicer):
 
     async def DeleteDocument(self, request: vector_service_pb2.DeleteDocumentRequest, context) -> vector_service_pb2.DeleteDocumentResponse:
         """Removes every chunk of a document (optionally only if older than `below_version`)."""
+        await self._fault_gate(context)
         deleted = self.vector_store.delete_by_doc_id(request.doc_id, below_version=request.below_version)
         return vector_service_pb2.DeleteDocumentResponse(deleted_count=deleted)
 
     async def ListDocuments(self, request: vector_service_pb2.ListDocumentsRequest, context) -> vector_service_pb2.ListDocumentsResponse:
         """Lists the documents held by this shard, with versions, for the coordinator's repair loop."""
+        await self._fault_gate(context)
         return vector_service_pb2.ListDocumentsResponse(documents=[
             vector_service_pb2.DocumentSummary(
                 doc_id=info.doc_id,
                 doc_version=info.version,
                 chunk_count=info.chunk_count,
                 replication_factor=info.replication_factor,
+                metadata_json=json.dumps(info.metadata),
             )
             for info in self.vector_store.list_documents()
         ])
 
     async def FetchDocument(self, request: vector_service_pb2.FetchDocumentRequest, context) -> vector_service_pb2.FetchDocumentResponse:
         """Returns a document's chunks with their embeddings so it can be copied to another shard."""
+        await self._fault_gate(context)
         info, chunks, vecs = self.vector_store.get_document(request.doc_id)
         if info is None:
             await context.abort(grpc.StatusCode.NOT_FOUND, f"doc '{request.doc_id}' not on {self.shard_id}")
@@ -153,12 +170,30 @@ class VectorStoreServicer(vector_service_pb2_grpc.VectorStoreServiceServicer):
                 text=c.text,
                 chunk_index=c.chunk_index,
                 metadata_json=json.dumps(c.metadata),
-                embedding=vecs[i].tolist(),
+                embedding=[] if request.omit_embeddings else vecs[i].tolist(),
                 doc_version=info.version,
                 replication_factor=info.replication_factor,
             )
             for i, c in enumerate(chunks)
         ])
+
+    async def SetFault(self, request: vector_service_pb2.FaultRequest, context) -> vector_service_pb2.FaultResponse:
+        """Dev-only fault injection: take the shard down, slow it, or wipe its in-memory index (simulated crash-restart)."""
+        if not self.chaos_enabled:
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "fault injection disabled (set CHAOS_ENABLED=true)")
+        mode = request.mode or "none"
+        if mode not in ("none", "down", "slow", "wipe"):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"unknown fault mode '{mode}'")
+        if mode == "wipe":
+            self.vector_store.clear()
+            self.start_time = time.time()
+        else:
+            self.fault_mode = mode
+            self.fault_latency_ms = max(0, request.latency_ms) if mode == "slow" else 0
+        logger.warning(f"[{self.shard_id}] CHAOS: fault mode={self.fault_mode} latency_ms={self.fault_latency_ms} (request: {mode})")
+        return vector_service_pb2.FaultResponse(
+            mode=self.fault_mode, latency_ms=self.fault_latency_ms, vector_count=self.vector_store.count()
+        )
 
 
 async def serve(shard_id: str, port: int):

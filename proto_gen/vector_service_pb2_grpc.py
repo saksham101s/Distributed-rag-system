@@ -64,6 +64,11 @@ class VectorStoreServiceStub:
                 request_serializer=vector__service__pb2.FetchDocumentRequest.SerializeToString,
                 response_deserializer=vector__service__pb2.FetchDocumentResponse.FromString,
                 _registered_method=True)
+        self.SetFault = channel.unary_unary(
+                '/vector_service.VectorStoreService/SetFault',
+                request_serializer=vector__service__pb2.FaultRequest.SerializeToString,
+                response_deserializer=vector__service__pb2.FaultResponse.FromString,
+                _registered_method=True)
 
 
 class VectorStoreServiceServicer:
@@ -105,6 +110,12 @@ class VectorStoreServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SetFault(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_VectorStoreServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -137,6 +148,11 @@ def add_VectorStoreServiceServicer_to_server(servicer, server):
                     servicer.FetchDocument,
                     request_deserializer=vector__service__pb2.FetchDocumentRequest.FromString,
                     response_serializer=vector__service__pb2.FetchDocumentResponse.SerializeToString,
+            ),
+            'SetFault': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetFault,
+                    request_deserializer=vector__service__pb2.FaultRequest.FromString,
+                    response_serializer=vector__service__pb2.FaultResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -301,6 +317,33 @@ class VectorStoreService:
             '/vector_service.VectorStoreService/FetchDocument',
             vector__service__pb2.FetchDocumentRequest.SerializeToString,
             vector__service__pb2.FetchDocumentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetFault(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/vector_service.VectorStoreService/SetFault',
+            vector__service__pb2.FaultRequest.SerializeToString,
+            vector__service__pb2.FaultResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -27,6 +27,7 @@ class DocumentInfo(BaseModel):
     version: int = 0
     replication_factor: int = 0
     chunk_count: int = 0
+    metadata: Dict[str, Any] = {}
 
 
 class FAISSVectorStore:
@@ -115,6 +116,7 @@ class FAISSVectorStore:
             info.version = version
             info.replication_factor = replication_factor
             info.chunk_count = len(chunks)
+            info.metadata = {k: v for k, v in (chunks[0].metadata if chunks else {}).items() if k != "chunk_index"}
             return True
 
     def search(self, query_vector: np.ndarray, top_k: int = 5) -> List[SearchResult]:

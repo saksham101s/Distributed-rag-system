@@ -46,6 +46,12 @@ class SystemConfig(BaseModel):
     # Tracing exporter: "none" (spans created but dropped) or "console"
     TRACING_EXPORTER: str = os.getenv("TRACING_EXPORTER", "none")
 
+    # File upload ingest
+    MAX_UPLOAD_MB: float = float(os.getenv("MAX_UPLOAD_MB", "10"))
+
+    # Dev-only fault injection endpoints (coordinator) and SetFault RPC (shards). Never enable in production.
+    CHAOS_ENABLED: bool = os.getenv("CHAOS_ENABLED", "false").lower() in ("1", "true", "yes")
+
     def shard_nodes(self) -> List[Tuple[str, str, int]]:
         """Parses SHARD_NODES into (shard_id, host, port) tuples."""
         nodes = []

@@ -137,11 +137,37 @@ python scripts/seed_documents.py
 | `CLAUDE_MODEL` / `GEMINI_MODEL` | `claude-opus-5-5` / `gemini-2.5-flash` | Model used by each provider |
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | Query cache |
 | `TRACING_EXPORTER` | `none` | `console` prints OpenTelemetry spans |
+| `MAX_UPLOAD_MB` | `10` | Upload size limit |
+| `CHAOS_ENABLED` | `false` | Dev-only fault injection endpoints (set on coordinator **and** shards) |
 
 See `docs/ARCHITECTURE.md` for the full list.
 
 ### 3. Launch React Frontend UI
 Open `frontend/index.html` directly in any modern web browser or serve via HTTP.
+
+---
+
+## REST API
+
+| Method & path | What it does |
+|---|---|
+| `POST /api/v1/documents/ingest` | Ingest `{doc_id, text, metadata?, replication_factor?}` |
+| `POST /api/v1/documents/upload` | Multipart upload of `.txt`/`.md`/`.pdf` (`file`, optional `doc_id`, `replication_factor`, `metadata` JSON) |
+| `GET /api/v1/documents` | Document catalog: version, chunks, metadata, replicas, replication status (`ok` / `under_replicated` / `over_replicated`) |
+| `GET /api/v1/documents/{doc_id}` | One document with its chunk texts |
+| `DELETE /api/v1/documents/{doc_id}` | Delete everywhere |
+| `POST /api/v1/query` | Answer + sources + per-shard telemetry |
+| `POST /api/v1/query/stream` | Same, as Server-Sent Events: `retrieval` → `token`… (`reset`) → `done` (or `error`) |
+| `GET /api/v1/cluster/status` | Nodes, health, ring share, faults, last repair |
+| `GET /api/v1/cluster/events` | SSE stream: `cluster_status` every heartbeat, `node_down`/`node_up`, `repair_completed`, `document_ingested`/`document_deleted`, `fault_injected` |
+| `POST /api/v1/cluster/repair` | Run a repair pass now |
+| `GET /api/v1/chaos`, `POST /api/v1/chaos/shards/{id}` | Dev-only: `{"mode": "down" \| "slow" \| "wipe" \| "none", "latency_ms"}` |
+
+Try streaming from a terminal:
+```bash
+curl -N -X POST localhost:8000/api/v1/query/stream -H 'content-type: application/json' -d '{"query":"what is consistent hashing?"}'
+curl -N localhost:8000/api/v1/cluster/events
+```
 
 ---
 

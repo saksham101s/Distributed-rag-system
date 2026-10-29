@@ -1,5 +1,7 @@
 import logging
-from typing import List, Optional
+import re
+import time
+from typing import Callable, Iterator, List, Optional
 from pydantic import BaseModel
 from shared.faiss_store import SearchResult
 from shared.config import config
@@ -14,6 +16,14 @@ class RAGResponse(BaseModel):
     sources: List[SearchResult]
     provider_used: str
     model_name: str
+
+
+class StreamEvent(BaseModel):
+    """One item of a streamed answer: a text delta, a reset (discard text so far), or the final done marker."""
+    type: str  # "token" | "reset" | "done"
+    text: str = ""
+    provider_used: str = ""
+    model_name: str = ""
 
 
 class LLMGenerator:
@@ -33,6 +43,79 @@ class LLMGenerator:
             return self._call_claude(query, prompt, context_chunks)
         else:
             return self._call_mock(query, context_chunks)
+
+    def stream_answer(
+        self,
+        query: str,
+        context_chunks: List[SearchResult],
+        should_stop: Callable[[], bool] = lambda: False,
+    ) -> Iterator[StreamEvent]:
+        """Streams the answer as StreamEvents (blocking generator; run it in a thread).
+
+        If a provider fails or refuses part-way, a "reset" event tells the client to drop the partial text,
+        then the mock answer is streamed instead, so a stream always ends with "done".
+        """
+        prompt = self._build_prompt(query, self._format_context(context_chunks))
+        if self.provider == "gemini" and config.GEMINI_API_KEY:
+            source = self._stream_gemini(prompt)
+        elif self.provider == "claude" and config.ANTHROPIC_API_KEY:
+            source = self._stream_claude(prompt)
+        else:
+            yield from self._stream_mock(query, context_chunks, should_stop)
+            return
+
+        emitted = False
+        try:
+            for event in source:
+                if should_stop():
+                    return
+                emitted = emitted or event.type == "token"
+                yield event
+            return
+        except Exception as e:
+            logger.warning(f"{self.provider} streaming failed ({e}). Falling back to Mock generator.")
+        finally:
+            source.close()
+        if emitted:
+            yield StreamEvent(type="reset")
+        yield from self._stream_mock(query, context_chunks, should_stop)
+
+    def _stream_mock(self, query: str, context_chunks: List[SearchResult], should_stop: Callable[[], bool]) -> Iterator[StreamEvent]:
+        """Streams the mock answer word by word so the UI path is exercised without an API key."""
+        resp = self._call_mock(query, context_chunks)
+        for piece in re.findall(r"\S+\s*", resp.answer):
+            if should_stop():
+                return
+            yield StreamEvent(type="token", text=piece)
+            time.sleep(0.01)
+        yield StreamEvent(type="done", provider_used=resp.provider_used, model_name=resp.model_name)
+
+    def _stream_gemini(self, prompt: str) -> Iterator[StreamEvent]:
+        from google import genai
+        client = genai.Client(api_key=config.GEMINI_API_KEY)
+        for chunk in client.models.generate_content_stream(model=config.GEMINI_MODEL, contents=prompt):
+            if chunk.text:
+                yield StreamEvent(type="token", text=chunk.text)
+        yield StreamEvent(type="done", provider_used="Google Gemini", model_name=config.GEMINI_MODEL)
+
+    def _stream_claude(self, prompt: str) -> Iterator[StreamEvent]:
+        import anthropic
+        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        # A server-side fallback continues on the same stream, so deltas keep arriving across a model switch
+        with client.beta.messages.stream(
+            model=config.CLAUDE_MODEL,
+            max_tokens=16000,
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+            output_config={"effort": config.CLAUDE_EFFORT},
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                yield StreamEvent(type="token", text=text)
+            final = stream.get_final_message()
+        if final.stop_reason == "refusal":
+            raise RuntimeError(f"request refused ({getattr(final.stop_details, 'category', None)})")
+        yield StreamEvent(type="done", provider_used="Anthropic Claude", model_name=final.model)
 
     def _format_context(self, context_chunks: List[SearchResult]) -> str:
         if not context_chunks:

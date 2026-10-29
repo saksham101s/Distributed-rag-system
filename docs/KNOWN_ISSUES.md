@@ -24,8 +24,14 @@
 34. **No auth, CORS `*`**, and no request size limits on ingest.
 35. `coordinator/baseline_rag.py` also binds port 8000, so it can't run next to the coordinator.
 36. No OTLP exporter or tracing backend (Jaeger/Tempo) in docker-compose; spans only go to the console.
-12. **Frontend** is a single HTML file with in-browser Babel (README now says so). The UI rework is the next planned step; it
-   should also show `failed_shards`/`partial`, the delete endpoint, `last_repair` and per-shard query telemetry.
+12. **Frontend** is a single HTML file with in-browser Babel (README now says so) and still polls `/cluster/status`.
+   The UI rework is next. The backend for it is done (Phase A): streaming answers, the event stream, the document catalog, upload and chaos controls.
+
+37. **The document catalog lists every shard on every request**: `GET /documents` and `GET /documents/{id}` call
+   `ListDocuments` on all healthy shards each time, so they're O(total docs). Pagination happens after the fan-out.
+38. **Chaos `down` is simulated at the RPC layer**: the shard process and TCP connection stay up. A real crash is covered by the chaos script.
+39. **Upload limits**: no OCR for scanned PDFs (they return 422), the whole file is read into memory (capped by `MAX_UPLOAD_MB`), and there's no `.docx`/HTML support.
+40. **Event history is in coordinator memory** (last 50 events) and is lost when the coordinator restarts (see 28).
 
 ## Resolved (2026-10-29)
 1. Duplicate results: `ScatterGatherEngine.merge_results` dedups by `chunk_id` and drops stale doc versions.

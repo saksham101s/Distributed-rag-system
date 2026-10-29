@@ -16,6 +16,7 @@ services:
       - REPLICATION_FACTOR=2
       - VIRTUAL_NODES=100
       - SHARD_TIMEOUT_SECONDS=1.5
+      - CHAOS_ENABLED=${CHAOS_ENABLED:-false}
     depends_on:
       - shard_0
       - shard_1
@@ -28,6 +29,8 @@ services:
       target: shard
     container_name: rag_shard_0
     command: python shard_node/shard_service.py --shard-id shard_0 --port 50051
+    environment:
+      - CHAOS_ENABLED=${CHAOS_ENABLED:-false}
     ports:
       - "50051:50051"
 
@@ -37,6 +40,8 @@ services:
       target: shard
     container_name: rag_shard_1
     command: python shard_node/shard_service.py --shard-id shard_1 --port 50052
+    environment:
+      - CHAOS_ENABLED=${CHAOS_ENABLED:-false}
     ports:
       - "50052:50052"
 
@@ -46,6 +51,8 @@ services:
       target: shard
     container_name: rag_shard_2
     command: python shard_node/shard_service.py --shard-id shard_2 --port 50053
+    environment:
+      - CHAOS_ENABLED=${CHAOS_ENABLED:-false}
     ports:
       - "50053:50053"
 

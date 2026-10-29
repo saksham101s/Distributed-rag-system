@@ -75,6 +75,7 @@ message DocumentSummary {
   int64 doc_version = 2;
   int32 chunk_count = 3;
   int32 replication_factor = 4;
+  string metadata_json = 5;  // doc-level metadata (chunk-specific keys removed)
 }
 
 message ListDocumentsResponse {
@@ -83,10 +84,23 @@ message ListDocumentsResponse {
 
 message FetchDocumentRequest {
   string doc_id = 1;
+  bool omit_embeddings = 2;  // true for UI detail views; repair needs the embeddings
 }
 
 message FetchDocumentResponse {
   repeated VectorChunk chunks = 1;  // includes embeddings, for re-replication
+}
+
+// Dev-only fault injection; shards reject it unless CHAOS_ENABLED=true
+message FaultRequest {
+  string mode = 1;        // "none" | "down" (all other RPCs fail UNAVAILABLE) | "slow" | "wipe" (clear index once)
+  int32 latency_ms = 2;   // added delay per RPC when mode = "slow"
+}
+
+message FaultResponse {
+  string mode = 1;
+  int32 latency_ms = 2;
+  int32 vector_count = 3;
 }
 
 service VectorStoreService {
@@ -96,4 +110,5 @@ service VectorStoreService {
   rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
   rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
   rpc FetchDocument(FetchDocumentRequest) returns (FetchDocumentResponse);
+  rpc SetFault(FaultRequest) returns (FaultResponse);
 }
