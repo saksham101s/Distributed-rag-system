@@ -181,3 +181,22 @@ async def test_chaos_disabled_returns_403(api, monkeypatch):
     monkeypatch.setattr(config, "CHAOS_ENABLED", False)
     r = await client.post("/api/v1/chaos/shards/shard_a", json={"mode": "down"})
     assert r.status_code == 403
+
+
+async def test_api_key_auth(api, monkeypatch):
+    client, _, _ = api
+    monkeypatch.setattr(config, "API_KEY", "s3cret")
+
+    assert (await client.get("/api/v1/cluster/status")).status_code == 401
+    assert (await client.get("/api/v1/cluster/status", headers={"Authorization": "Bearer wrong"})).status_code == 401
+    assert (await client.get("/api/v1/cluster/status", headers={"Authorization": "Bearer s3cret"})).status_code == 200
+    assert (await client.get("/api/v1/cluster/status", headers={"X-API-Key": "s3cret"})).status_code == 200
+    # The query-string key is only for the event stream (EventSource can't set headers)
+    assert (await client.get("/api/v1/cluster/status?api_key=s3cret")).status_code == 401
+    assert (await client.get("/api/v1/cluster/events")).status_code == 401
+    # Preflight still works without a key
+    pre = await client.options("/api/v1/query", headers={"Origin": "http://x", "Access-Control-Request-Method": "POST"})
+    assert pre.status_code == 200
+
+    monkeypatch.setattr(config, "API_KEY", "")
+    assert (await client.get("/api/v1/cluster/status")).status_code == 200

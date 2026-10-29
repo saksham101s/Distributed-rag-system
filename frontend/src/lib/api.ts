@@ -1,4 +1,5 @@
 // Typed client for the coordinator REST + SSE API (see docs/ARCHITECTURE.md §3).
+import { authHeaders, notifyAuthRequired } from "./auth";
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "";
 
@@ -111,20 +112,27 @@ function errorMessage(body: unknown, fallback: string): string {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, init);
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers: { ...init?.headers, ...authHeaders() } });
   } catch {
     throw new ApiError(0, "Can't reach the coordinator. Is it running on port 8000?");
   }
+  if (res.status === 401) notifyAuthRequired();
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, errorMessage(body, `${res.status} ${res.statusText}`));
   return body as T;
 }
 
-const json = (body: unknown): RequestInit => ({
+const json = (body: unknown): RequestInit & { headers: Record<string, string> } => ({
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify(body),
 });
+
+/** URL for the cluster event stream. EventSource can't send headers, so the key goes in the query string. */
+export function eventsUrl(apiKey: string): string {
+  const base = `${API_BASE}/api/v1/cluster/events`;
+  return apiKey ? `${base}?api_key=${encodeURIComponent(apiKey)}` : base;
+}
 
 export const api = {
   status: () => request<ClusterStatus>("/api/v1/cluster/status"),
@@ -192,13 +200,15 @@ export interface StreamHandlers {
 export async function streamQuery(query: string, topK: number, handlers: StreamHandlers, signal: AbortSignal) {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/api/v1/query/stream`, { ...json({ query, top_k: topK }), signal });
+    const init = json({ query, top_k: topK });
+    res = await fetch(`${API_BASE}/api/v1/query/stream`, { ...init, headers: { ...init.headers, ...authHeaders() }, signal });
   } catch (e) {
     if (signal.aborted) return;
     handlers.onError("Can't reach the coordinator. Is it running on port 8000?");
     return;
   }
   if (!res.ok || !res.body) {
+    if (res.status === 401) notifyAuthRequired();
     const body = await res.json().catch(() => null);
     handlers.onError(errorMessage(body, `${res.status} ${res.statusText}`));
     return;

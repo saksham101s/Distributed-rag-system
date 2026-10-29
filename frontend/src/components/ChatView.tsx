@@ -1,22 +1,9 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
-import { Source, Telemetry, streamQuery } from "../lib/api";
+import { streamQuery } from "../lib/api";
+import { Turn, loadTurns, saveTurns } from "../lib/chatHistory";
 import { AnswerText, SourceCard, TelemetryStrip } from "./AnswerParts";
 import { Icon } from "./Icon";
 import { ErrorBanner } from "./ui";
-
-interface Turn {
-  id: number;
-  query: string;
-  answer: string;
-  sources: Source[];
-  telemetry: Telemetry | null;
-  cached: boolean;
-  provider?: string;
-  totalMs?: number;
-  phase: "retrieving" | "generating" | "done" | "stopped" | "error";
-  error?: string;
-  resets: number;
-}
 
 const SUGGESTIONS = [
   "How does consistent hashing place documents on shards?",
@@ -24,14 +11,13 @@ const SUGGESTIONS = [
   "How does scatter-gather merge results?",
 ];
 
-let nextId = 1;
-
 export function ChatView({ hasDocuments, onGoToDocuments }: { hasDocuments: boolean | null; onGoToDocuments: () => void }) {
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<Turn[]>(loadTurns);
   const [draft, setDraft] = useState("");
   const [topK, setTopK] = useState(5);
   const [highlight, setHighlight] = useState<{ turn: number; source: number } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const nextId = useRef(turns.reduce((m, t) => Math.max(m, t.id), 0) + 1);
   const endRef = useRef<HTMLDivElement>(null);
   const busy = turns.some((t) => t.phase === "retrieving" || t.phase === "generating");
 
@@ -41,13 +27,23 @@ export function ChatView({ hasDocuments, onGoToDocuments }: { hasDocuments: bool
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  // Save when a turn starts or finishes, not on every streamed token
+  useEffect(() => {
+    saveTurns(turns);
+  }, [turns.length, busy]);
+
+  function clearHistory() {
+    setTurns([]);
+    setHighlight(null);
+  }
+
   const update = (id: number, patch: (t: Turn) => Partial<Turn>) =>
     setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch(t) } : t)));
 
   async function ask(query: string) {
     const q = query.trim();
     if (!q || busy) return;
-    const id = nextId++;
+    const id = nextId.current++;
     setDraft("");
     setTurns((prev) => [
       ...prev,
@@ -118,6 +114,15 @@ export function ChatView({ hasDocuments, onGoToDocuments }: { hasDocuments: bool
             )}
           </div>
         ) : (
+          <>
+          <div className="chat-toolbar">
+            <span className="muted small">{turns.length === 1 ? "1 question" : `${turns.length} questions`}
+              <span className="col-secondary"> · saved in this browser</span>
+            </span>
+            <button type="button" className="link-button small" onClick={clearHistory} disabled={busy}>
+              Clear conversation
+            </button>
+          </div>
           <ol className="turns">
             {turns.map((t) => (
               <li key={t.id} className="turn">
@@ -162,6 +167,7 @@ export function ChatView({ hasDocuments, onGoToDocuments }: { hasDocuments: bool
               </li>
             ))}
           </ol>
+          </>
         )}
         <div ref={endRef} />
       </div>

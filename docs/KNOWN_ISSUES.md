@@ -19,19 +19,16 @@
    per-shard digests (Merkle tree / hash of doc versions per ring range) at scale.
 31. **Reads broadcast to every healthy shard**: cost grows with shard count. No hedged requests or per-shard top-k tuning.
 32. **Exact search only** (`IndexFlatIP`): O(N) per query per shard. No IVF/HNSW option.
-34. **No auth, CORS `*`**, and no request size limits on ingest.
+34. **Single shared API key only** (optional `API_KEY`, 2026-10-29): no users/roles, no rate limits, CORS `*`, and no request size limits on JSON ingest. The UI keeps the key in localStorage, and the event stream sends it in the query string (it can show up in access logs).
 35. `coordinator/baseline_rag.py` also binds port 8000, so it can't run next to the coordinator.
 36. No OTLP exporter or tracing backend (Jaeger/Tempo) in docker-compose; spans only go to the console.
-41. **UI has no auth**, like the API (see 34). The chaos buttons only appear when `CHAOS_ENABLED=true`.
-42. **No UI component tests**: only `lib/` has vitest tests. The flows were checked by hand in headless Chromium (2026-10-29), but there is no Playwright suite in the repo or CI yet.
-43. **The Ask side panel is hidden below 960px**: on narrow screens, cluster status lives only in the top bar and the Cluster tab.
-44. **Chat history is in memory**: it's lost on page reload.
 
 37. **The document catalog lists every shard on every request**: `GET /documents` and `GET /documents/{id}` call
    `ListDocuments` on all healthy shards each time, so they're O(total docs). Pagination happens after the fan-out.
 38. **Chaos `down` is simulated at the RPC layer**: the shard process and TCP connection stay up. A real crash is covered by the chaos script.
 39. **Upload limits**: no OCR for scanned PDFs (they return 422), the whole file is read into memory (capped by `MAX_UPLOAD_MB`), and there's no `.docx`/HTML support.
 40. **Event history is in coordinator memory** (last 50 events) and is lost when the coordinator restarts (see 28).
+45. **No browser end-to-end tests in the repo or CI**: the Playwright flows Claude ran (sign in, ask, reload, mobile panel, chaos) live in its scratchpad only, and there is no CI workflow at all.
 
 ## Resolved (2026-10-29)
 1. Duplicate results: `ScatterGatherEngine.merge_results` dedups by `chunk_id` and drops stale doc versions.
@@ -60,3 +57,7 @@
 26. `pytest.ini` + `tests/conftest.py` added.
 12. Frontend rebuilt as a Vite + React + TS app driven by the SSE API (2026-10-29, branch `ui-rework`); the old single HTML file is removed.
 33. Source attribution: the merge now returns `replica_shards`, and the UI shows "also on …" (2026-10-29).
+41. UI auth: optional `API_KEY` on the coordinator (bearer / `X-API-Key`, `?api_key=` for the event stream), and a sign-in screen and Sign out in the UI (2026-10-29). Remaining limits are in 34.
+42. UI component tests: vitest + jsdom + Testing Library for `ChatView`, `AnswerParts` and `App` (16 frontend tests total). A browser end-to-end suite (Playwright) is still not in the repo; see 45.
+43. Below 960px the Ask side panel is a slide-over opened by a **Shards** button (2026-10-29).
+44. Chat history is saved in localStorage (last 30 turns), restored on reload, with **Clear conversation** (2026-10-29).

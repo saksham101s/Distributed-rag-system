@@ -1,7 +1,7 @@
 # Architecture — Distributed RAG System
 
 > Source of truth for *how the code works today*. Keep it in sync with the code.
-> Last verified against code: 2026-10-29 (branch `ui-rework`, on top of `fc9b117`).
+> Last verified against code: 2026-10-29 (branch `ui-rework`, on top of `fc9b117`; includes the API key, saved chat, narrow-screen panel and component tests).
 
 ## 1. What it is
 
@@ -70,11 +70,14 @@ Shard nodes ×3 (shard_node/shard_service.py) → FAISSVectorStore (shared/faiss
 | `Dockerfile` | Multi-target: `shard` (requirements-shard.txt only) and `coordinator` (CPU torch, full requirements, embedding model pre-downloaded). |
 | `docker-compose.yml`, `docker/prometheus.yml` | Coordinator (with `SHARD_NODES` using service names), 3 shards, redis, prometheus. |
 | `requirements.txt` / `requirements-shard.txt` | Full stack (includes `-r requirements-shard.txt`) / shard runtime only. |
-| `frontend/` | Vite + React + TS UI (deps: react, react-dom; dev: vite, typescript, vitest). `npm run dev` / `build` / `test` / `typecheck`. |
-| `frontend/src/lib/api.ts` | Typed API client, `createSseParser()`, `streamQuery()` (POST + streamed body; EventSource can't POST). |
-| `frontend/src/hooks/useClusterEvents.ts` | One `EventSource` on `/cluster/events` → `{status, events (dedup by id, newest first, max 200), connected, catalogVersion}`. `catalogVersion` bumps on events that can change the doc list. |
-| `frontend/src/App.tsx` | Shell: top bar (health from the event stream), hash-routed tabs `#/ask`, `#/documents`, `#/cluster`. The Ask view stays mounted (hidden) so the conversation survives tab switches. `ShardsContext` gives every shard a stable color slot. |
-| `frontend/src/components/` | `ChatView` (streaming turns, stop, citation chips), `AnswerParts` (`AnswerText`, `SourceCard`, `TelemetryStrip`), `DocumentsView` (upload, paste, catalog table, detail drawer, two-step delete), `ClusterView` (stat tiles, `RingChart`, `ShardCard` + chaos controls, `EventFeed`), `ui.tsx` (badges, pills, panels), `Icon.tsx` (inline SVG). |
+| `frontend/` | Vite + React + TS UI (deps: react, react-dom; dev: vite, typescript, vitest, jsdom, @testing-library/react). `npm run dev` / `build` / `test` / `typecheck`. |
+| `frontend/src/lib/auth.ts` | API key in localStorage (`rag.apiKey`), `authHeaders()`, and the `rag:auth-required` window event fired on any 401. |
+| `frontend/src/lib/chatHistory.ts` | `Turn` type, `loadTurns()` / `saveTurns()` in localStorage (`rag.chat.v1`, last 30 turns, halves on quota errors). Turns that were mid-stream load as `stopped`. |
+| `frontend/src/lib/api.ts` | Typed API client (adds the bearer key, notifies on 401), `eventsUrl(key)` (key goes in `?api_key=` since EventSource can't send headers), `createSseParser()`, `streamQuery()` (POST + streamed body; EventSource can't POST). |
+| `frontend/src/hooks/useClusterEvents.ts` | `useClusterEvents(apiKey)`: one `EventSource` on `/cluster/events` (reopened when the key changes; on error it probes `/cluster/status` so a 401 reaches the sign-in screen) → `{status, events (dedup by id, newest first, max 200), connected, catalogVersion}`. `catalogVersion` bumps on events that can change the doc list. |
+| `frontend/src/App.tsx` | Shell: top bar (health from the event stream), hash-routed tabs `#/ask`, `#/documents`, `#/cluster`. The Ask view stays mounted (hidden) so the conversation survives tab switches. Shows `SignIn` instead of the app after a 401; Sign out clears the key. Below 960px the side panel is a slide-over opened by the **Shards** button (Escape/backdrop closes it). `ShardsContext` gives every shard a stable color slot. |
+| `frontend/src/components/` | `ChatView` (streaming turns, stop, citation chips, saved history + Clear conversation), `SignIn` (checks the key with `/cluster/status` before storing it), `AnswerParts` (`AnswerText`, `SourceCard`, `TelemetryStrip`), `DocumentsView` (upload, paste, catalog table, detail drawer, two-step delete), `ClusterView` (stat tiles, `RingChart`, `ShardCard` + chaos controls, `EventFeed`), `ui.tsx` (badges, pills, panels), `Icon.tsx` (inline SVG). |
+| `frontend/src/test/helpers.ts`, `**/*.test.tsx` | Component tests (vitest, jsdom per file via `// @vitest-environment jsdom`): `ChatView` (stream, error, save/restore/clear, mid-stream restore), `AnswerParts` (telemetry pills, citations), `App` (401 → sign in → sign out, side panel toggle). Fakes: `mockFetch`, `sseResponse`, `FakeEventSource`. |
 | `frontend/src/styles.css` | Design tokens with light + dark themes (`prefers-color-scheme`), 6 shard color slots, responsive breakpoints at 960px and 640px. |
 
 ## 3. REST API (coordinator)
@@ -184,7 +187,9 @@ Env vars (`shared/config.py`):
 `EMBEDDING_MODEL_NAME` (all-MiniLM-L6-v2), `EMBEDDING_DIM` (384), `DEFAULT_CHUNK_SIZE` (500), `DEFAULT_CHUNK_OVERLAP` (50),
 `DEFAULT_TOP_K` (5), `SCORE_THRESHOLD` (0.0), `LLM_PROVIDER` (mock|gemini|claude), `GEMINI_API_KEY`, `GEMINI_MODEL` (gemini-2.5-flash),
 `ANTHROPIC_API_KEY`, `CLAUDE_MODEL` (claude-opus-5-5), `CLAUDE_EFFORT` (medium), `REDIS_HOST`, `REDIS_PORT`, `CACHE_TTL_SECONDS` (300),
-`TRACING_EXPORTER` (none|console), `MAX_UPLOAD_MB` (10), `CHAOS_ENABLED` (false; coordinator and shards). All are consumed.
+`TRACING_EXPORTER` (none|console), `MAX_UPLOAD_MB` (10), `CHAOS_ENABLED` (false; coordinator and shards), `API_KEY` (empty = no auth). All are consumed.
+
+Auth: when `API_KEY` is set, the `require_api_key` middleware in `coordinator_service.py` returns 401 for any `/api/` request (except `OPTIONS`) without `Authorization: Bearer <key>` or `X-API-Key: <key>`; `GET /api/v1/cluster/events` also accepts `?api_key=`. Compared with `hmac.compare_digest`. CORS wraps the middleware so 401s carry CORS headers. `/metrics` and the UI at `/` stay open.
 
 Prometheus metrics: `rag_query_latency_seconds` (hist), `rag_cache_hits_total{status}`,
 `rag_shard_request_duration_seconds{shard_id,status=success|timeout|error}` (hist, observed per shard search),

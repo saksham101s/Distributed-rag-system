@@ -17,6 +17,7 @@ services:
       - VIRTUAL_NODES=100
       - SHARD_TIMEOUT_SECONDS=1.5
       - CHAOS_ENABLED=${CHAOS_ENABLED:-false}
+      - API_KEY=${API_KEY:-}
     depends_on:
       - shard_0
       - shard_1

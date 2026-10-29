@@ -139,6 +139,7 @@ python scripts/seed_documents.py
 | `TRACING_EXPORTER` | `none` | `console` prints OpenTelemetry spans |
 | `MAX_UPLOAD_MB` | `10` | Upload size limit |
 | `CHAOS_ENABLED` | `false` | Dev-only fault injection endpoints (set on coordinator **and** shards) |
+| `API_KEY` | _(empty)_ | If set, every `/api/v1` call needs `Authorization: Bearer <key>` (or `X-API-Key`); the UI asks for it on a sign-in screen. `/metrics` and the UI files stay open |
 
 See `docs/ARCHITECTURE.md` for the full list.
 
@@ -155,6 +156,10 @@ The UI has three views:
 - **Cluster**: the hash-ring share chart, shard health and vector counts, the live activity feed (Server-Sent Events), Run repair, and, with `CHAOS_ENABLED=true`, buttons to take a shard down, slow it, or wipe it and watch failover and repair happen.
 
 `docker compose up --build` builds the UI into the coordinator image, so it's served at http://localhost:8000/.
+
+The conversation is saved in the browser (localStorage, last 30 questions) and survives a reload; **Clear conversation** wipes it. When the coordinator has `API_KEY` set, the UI shows a sign-in screen and keeps the key in localStorage until you sign out. On screens narrower than 960px, the shard panel opens from the **Shards** button.
+
+UI tests: `npm test` runs vitest (lib unit tests and component tests with jsdom + Testing Library).
 
 ---
 

@@ -11,5 +11,5 @@ export default defineConfig({
     port: 5173,
     proxy: { "/api": { target, changeOrigin: true } },
   },
-  test: { environment: "node" },
+  test: { environment: "node", include: ["src/**/*.test.{ts,tsx}"] },
 } as never);

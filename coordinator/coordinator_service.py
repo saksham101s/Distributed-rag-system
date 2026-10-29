@@ -4,6 +4,7 @@ import sys
 # Ensure project root is in sys.path for direct script execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import hmac
 import json
 import logging
 import asyncio
@@ -12,7 +13,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Literal, Optional, Tuple
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
@@ -500,6 +501,28 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+def _presented_key(request: Request) -> str:
+    """The API key a request carries, from Authorization: Bearer, X-API-Key, or (event stream only) ?api_key=."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    if request.headers.get("x-api-key"):
+        return request.headers["x-api-key"]
+    if request.url.path == "/api/v1/cluster/events":
+        return request.query_params.get("api_key", "")
+    return ""
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    """Rejects /api/ requests without the configured API_KEY. /health, /metrics and the UI stay open."""
+    if config.API_KEY and request.url.path.startswith("/api/") and request.method != "OPTIONS":
+        if not hmac.compare_digest(_presented_key(request).encode(), config.API_KEY.encode()):
+            return JSONResponse(status_code=401, content={"detail": "Missing or invalid API key."}, headers={"WWW-Authenticate": "Bearer"})
+    return await call_next(request)
+
+
+# Added after the auth middleware so it wraps it, and 401s still carry CORS headers
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

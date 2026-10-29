@@ -52,6 +52,10 @@ class SystemConfig(BaseModel):
     # Dev-only fault injection endpoints (coordinator) and SetFault RPC (shards). Never enable in production.
     CHAOS_ENABLED: bool = os.getenv("CHAOS_ENABLED", "false").lower() in ("1", "true", "yes")
 
+    # Optional shared API key. When set, every /api/v1 route needs `Authorization: Bearer <key>` or `X-API-Key: <key>`
+    # (or `?api_key=` on GET /cluster/events, since EventSource can't send headers). Empty means no auth (dev default).
+    API_KEY: str = os.getenv("API_KEY", "")
+
     def shard_nodes(self) -> List[Tuple[str, str, int]]:
         """Parses SHARD_NODES into (shard_id, host, port) tuples."""
         nodes = []
